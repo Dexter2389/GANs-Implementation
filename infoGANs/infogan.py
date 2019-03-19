@@ -5,20 +5,14 @@ information maximizing generative adversarial nets."
 Advances in Neural Information Processing Systems. 2016.
 '''
 
-import tensorflow as tf
-from tensorflow.keras.datasets import cifar10
-from tensorflow.keras.layers import Input, Dense, Reshape, Flatten, Dropout, multiply, concatenate
-from tensorflow.keras.layers import BatchNormalization, Activation, Embedding, ZeroPadding2D, Lambda
-from tensorflow.keras.layers import LeakyReLU
-from tensorflow.keras.layers import UpSampling2D, Conv2D, Conv2DTranspose
-from tensorflow.keras.models import Sequential, Model
-from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.utils import to_categorical
-import tensorflow.keras.backend as K
-
+import numpy as np
 import matplotlib.pyplot as plt
 
-import numpy as np
+import tensorflow as tf
+import tensorflow.keras.backend as K
+
+from tensorflow.keras import datasets
+from tensorflow.keras import layers, models, optimizers, utils
 
 class InfoGAN():
     def __init__(self):
@@ -29,7 +23,7 @@ class InfoGAN():
         self.img_shape = (self.img_rows, self.img_cols, self.channels)
         self.latent_dim = 134
 
-        optimizer = Adam(0.0002, 0.5)
+        optimizer = optimizers.Adam(0.0002, 0.5)
         losses = ["binary_crossentropy", self.mutual_info_loss]
 
         #Building Discriminator and Recognition Network
@@ -45,7 +39,7 @@ class InfoGAN():
         self.generator = self.generator_model()
 
         # The generator takes noise and the target label as input and generates the corresponding digit of that label
-        gen_input = Input(shape=(self.latent_dim, ))
+        gen_input = layers.Input(shape=(self.latent_dim, ))
         img = self.generator(gen_input)
 
         self.discriminator.trainable = True
@@ -56,74 +50,74 @@ class InfoGAN():
         target_label = self.recognition(img)
 
         # The combined model (stacked generator and discriminator)
-        self.combined = Model(gen_input, [valid, target_label])
+        self.combined = models.Model(gen_input, [valid, target_label])
         self.combined.compile(loss=losses, optimizer=optimizer)
 
     def generator_model(self, layer_filters=[256, 128, 64]):
         
-        gen_input = Input(shape=(self.latent_dim, ))
+        gen_input = layers.Input(shape=(self.latent_dim, ))
 
-        x = Dense(1024, activation="relu")(gen_input)
-        x = BatchNormalization(momentum=0.8)(x)
+        x = layers.Dense(1024, activation="relu")(gen_input)
+        x = layers.BatchNormalization(momentum=0.8)(x)
 
-        x = Dense(448*4*4, activation="relu")(x)
-        x = Reshape((4,4,448))(x)
-        x = BatchNormalization(momentum=0.8)(x)
+        x = layers.Dense(448*4*4, activation="relu")(x)
+        x = layers.Reshape((4,4,448))(x)
+        x = layers.BatchNormalization(momentum=0.8)(x)
 
         for filters in layer_filters:
-            x = UpSampling2D()(x)
-            x = Conv2D(filters, kernel_size=(4,4), padding="same")(x)
-            x = Activation("relu")(x)
-            x = BatchNormalization(momentum=0.8)(x)
+            x = layers.UpSampling2D()(x)
+            x = layers.Conv2D(filters, kernel_size=(4,4), padding="same")(x)
+            x = layers.Activation("relu")(x)
+            x = layers.BatchNormalization(momentum=0.8)(x)
 
-        conv_last = Conv2D(self.channels, kernel_size=(4,4), padding="same")(x)
-        activation = Activation("tanh")(conv_last)
+        conv_last = layers.Conv2D(self.channels, kernel_size=(4,4), padding="same")(x)
+        activation = layers.Activation("tanh")(conv_last)
 
-        model = Model(gen_input, activation)
+        model = models.Model(gen_input, activation)
 
         model.summary()
         
         return model
         
     def discriminator_recognition_net(self, layer_filters=[64, 128, 256]):
-        dis_input = Input(shape=self.img_shape)
-        x = Conv2D(layer_filters[0], kernel_size=(4,4), strides=2, padding="same")(dis_input)
-        x = LeakyReLU(alpha=0.1)(x)
-        x = Dropout(0.25)(x)
+        dis_input = layers.Input(shape=self.img_shape)
+        x = layers.Conv2D(layer_filters[0], kernel_size=(4,4), strides=2, padding="same")(dis_input)
+        x = layers.LeakyReLU(alpha=0.1)(x)
+        x = layers.Dropout(0.25)(x)
 
         for filters in layer_filters[1:(len(layer_filters)-1)]:
-            x = Conv2D(filters, kernel_size=(4,4), strides=2, padding="same")(x)
-            x = ZeroPadding2D(padding=((0,1),(0,1)))(x)
-            x = LeakyReLU(alpha=0.1)(x)
-            x = Dropout(0.25)(x)
-            x = BatchNormalization(momentum=0.8)(x)
+            x = layers.Conv2D(filters, kernel_size=(4,4), strides=2, padding="same")(x)
+            x = layers.ZeroPadding2D(padding=((0,1),(0,1)))(x)
+            x = layers.LeakyReLU(alpha=0.1)(x)
+            x = layers.Dropout(0.25)(x)
+            x = layers.BatchNormalization(momentum=0.8)(x)
 
-        x = Conv2D(layer_filters[(len(layer_filters)-1)], kernel_size=(4,4), strides=2, padding="same")(x)
-        x = LeakyReLU(alpha=0.1)(x)
-        x = Dropout(0.25)(x)
-        x = BatchNormalization(momentum=0.8)(x)
+        x = layers.Conv2D(layer_filters[(len(layer_filters)-1)], kernel_size=(4,4), strides=2, padding="same")(x)
+        x = layers.LeakyReLU(alpha=0.1)(x)
+        x = layers.Dropout(0.25)(x)
+        x = layers.BatchNormalization(momentum=0.8)(x)
         
-        x = Flatten()(x)
+        x = layers.Flatten()(x)
 
-        return Model(dis_input, x)
+        return models.Model(dis_input, x)
     
     def discriminator_model(self):
-        dis_input = Input(shape=self.img_shape)
+        dis_input = layers.Input(shape=self.img_shape)
         x = self.discriminator_recognition_net()(dis_input)
-        final = Dense(self.channels, activation="sigmoid")(x)
+        final = layers.Dense(self.channels, activation="sigmoid")(x)
 
-        model = Model(dis_input, final)
+        model = models.Model(dis_input, final)
         model.summary()
 
         return model
     
     def recognition_model(self):
-        reco_input = Input(shape=self.img_shape)
+        reco_input = layers.Input(shape=self.img_shape)
         x = self.discriminator_recognition_net()(reco_input)
-        x = Dense(128, activation="relu")(x)
-        x = Dense(self.num_classes, activation="softmax")(x)
+        x = layers.Dense(128, activation="relu")(x)
+        x = layers.Dense(self.num_classes, activation="softmax")(x)
 
-        model = Model(reco_input, x)
+        model = models.Model(reco_input, x)
         model.summary()
 
         return model
@@ -140,13 +134,13 @@ class InfoGAN():
         # Generator inputs
         sampled_noise = np.random.normal(0, 1, (batch_size, noise_variable))
         #sampled_labels = np.random.randint(0, self.num_classes, batch_size).reshape(-1, 1)
-        sampled_labels = to_categorical((np.random.randint(0, self.num_classes, batch_size).reshape(-1, 1)), num_classes=self.num_classes)
+        sampled_labels = utils.to_categorical((np.random.randint(0, self.num_classes, batch_size).reshape(-1, 1)), num_classes=self.num_classes)
         return sampled_noise, sampled_labels
 
     def train(self, epochs, batch_size=128, sample_interval=50):
 
         #Load the Dataset
-        (X_train, y_train), (_, _) = cifar10.load_data()
+        (X_train, y_train), (_, _) = datasets.cifar10.load_data()
         print(X_train.shape)
         #Rescale -1 to 1
         X_train = (X_train.astype(np.float32) - 127.5) / 127.5
@@ -194,7 +188,7 @@ class InfoGAN():
         fig, axs = plt.subplots(r, c)
         for i in range(c):
             sampled_noise, _ = self.sample_generator_input(c)
-            label = to_categorical(np.full(fill_value=i, shape=(r,1)), num_classes=self.num_classes)
+            label = utils.to_categorical(np.full(fill_value=i, shape=(r,1)), num_classes=self.num_classes)
             gen_input = np.concatenate((sampled_noise, label), axis=1)
             gen_imgs = self.generator.predict(gen_input)
             gen_imgs = 0.5 * gen_imgs + 0.5
