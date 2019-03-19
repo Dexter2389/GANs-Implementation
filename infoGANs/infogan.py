@@ -6,7 +6,7 @@ Advances in Neural Information Processing Systems. 2016.
 '''
 
 import tensorflow as tf
-from tensorflow.keras.datasets import mnist, cifar10
+from tensorflow.keras.datasets import cifar10
 from tensorflow.keras.layers import Input, Dense, Reshape, Flatten, Dropout, multiply, concatenate
 from tensorflow.keras.layers import BatchNormalization, Activation, Embedding, ZeroPadding2D, Lambda
 from tensorflow.keras.layers import LeakyReLU
@@ -59,86 +59,74 @@ class InfoGAN():
         self.combined = Model(gen_input, [valid, target_label])
         self.combined.compile(loss=losses, optimizer=optimizer)
 
-    def generator_model(self):
-
-        model = Sequential()
-
-        model.add(Dense(1024, input_dim=self.latent_dim, activation="relu"))
-        model.add(BatchNormalization(momentum=0.8))
-        model.add(Dense(448*4*4, activation="relu"))
-        model.add(Reshape((4,4,448)))
-        model.add(BatchNormalization(momentum=0.8))
-
-        model.add(UpSampling2D())
-        model.add(Conv2D(256, kernel_size=(4,4), padding="same"))
-        model.add(Activation("relu"))
-        model.add(BatchNormalization(momentum=0.8))
+    def generator_model(self, layer_filters=[256, 128, 64]):
         
-        model.add(UpSampling2D())
-        model.add(Conv2D(128, kernel_size=(4,4), padding="same"))
-        model.add(Activation("relu"))
-        model.add(BatchNormalization(momentum=0.8))
-        
-        model.add(UpSampling2D())
-        model.add(Conv2D(64, kernel_size=(4,4), padding="same"))
-        model.add(Activation("relu"))
-        model.add(BatchNormalization(momentum=0.8))
-        
-        model.add(Conv2D(self.channels, kernel_size=(4,4), padding='same'))
-        model.add(Activation("tanh"))
-
         gen_input = Input(shape=(self.latent_dim, ))
-        img = model(gen_input)
+
+        x = Dense(1024, activation="relu")(gen_input)
+        x = BatchNormalization(momentum=0.8)(x)
+
+        x = Dense(448*4*4, activation="relu")(x)
+        x = Reshape((4,4,448))(x)
+        x = BatchNormalization(momentum=0.8)(x)
+
+        for filters in layer_filters:
+            x = UpSampling2D()(x)
+            x = Conv2D(filters, kernel_size=(4,4), padding="same")(x)
+            x = Activation("relu")(x)
+            x = BatchNormalization(momentum=0.8)(x)
+
+        conv_last = Conv2D(self.channels, kernel_size=(4,4), padding="same")(x)
+        activation = Activation("tanh")(conv_last)
+
+        model = Model(gen_input, activation)
 
         model.summary()
+        
+        return model
+        
+    def discriminator_recognition_net(self, layer_filters=[64, 128, 256]):
+        dis_input = Input(shape=self.img_shape)
+        x = Conv2D(layer_filters[0], kernel_size=(4,4), strides=2, padding="same")(dis_input)
+        x = LeakyReLU(alpha=0.1)(x)
+        x = Dropout(0.25)(x)
 
-        return Model(gen_input, img)
+        for filters in layer_filters[1:(len(layer_filters)-1)]:
+            x = Conv2D(filters, kernel_size=(4,4), strides=2, padding="same")(x)
+            x = ZeroPadding2D(padding=((0,1),(0,1)))(x)
+            x = LeakyReLU(alpha=0.1)(x)
+            x = Dropout(0.25)(x)
+            x = BatchNormalization(momentum=0.8)(x)
 
-    def discriminator_recognition_net(self):
+        x = Conv2D(layer_filters[(len(layer_filters)-1)], kernel_size=(4,4), strides=2, padding="same")(x)
+        x = LeakyReLU(alpha=0.1)(x)
+        x = Dropout(0.25)(x)
+        x = BatchNormalization(momentum=0.8)(x)
+        
+        x = Flatten()(x)
 
-        model = Sequential()
+        return Model(dis_input, x)
+    
+    def discriminator_model(self):
+        dis_input = Input(shape=self.img_shape)
+        x = self.discriminator_recognition_net()(dis_input)
+        final = Dense(self.channels, activation="sigmoid")(x)
 
-        model.add(Conv2D(64, kernel_size=(4,4), strides=2, input_shape=self.img_shape, padding="same"))
-        model.add(LeakyReLU(alpha=0.1))
-        model.add(Dropout(0.25))
-
-        model.add(Conv2D(128, kernel_size=(4,4), strides=2, padding="same"))
-        model.add(ZeroPadding2D(padding=((0,1),(0,1))))
-        model.add(LeakyReLU(alpha=0.1))
-        model.add(Dropout(0.25))
-
-        model.add(BatchNormalization(momentum=0.8))
-        model.add(Conv2D(256, kernel_size=(4,4), strides=2, padding="same"))
-        model.add(LeakyReLU(alpha=0.1))
-        model.add(Dropout(0.25))
-
-        model.add(BatchNormalization(momentum=0.8))
-        model.add(Flatten())
+        model = Model(dis_input, final)
+        model.summary()
 
         return model
     
-    def discriminator_model(self):
-        model = self.discriminator_recognition_net()
-        model.add(Dense(self.channels, activation="sigmoid"))
-
-        dis_input = Input(shape=self.img_shape)
-        validity = model(dis_input)
-
-        model.summary()
-
-        return Model(dis_input, validity)
-    
     def recognition_model(self):
-        model = self.discriminator_recognition_net()
-        model.add(Dense(128, activation="relu"))
-        model.add(Dense(self.num_classes, activation="softmax"))
-
         reco_input = Input(shape=self.img_shape)
-        label = model(reco_input)
+        x = self.discriminator_recognition_net()(reco_input)
+        x = Dense(128, activation="relu")(x)
+        x = Dense(self.num_classes, activation="softmax")(x)
 
+        model = Model(reco_input, x)
         model.summary()
 
-        return Model(reco_input, label)
+        return model
 
     def mutual_info_loss(self, c, c_given_x):
         """The mutual information metric we aim to minimize"""
@@ -213,12 +201,12 @@ class InfoGAN():
             for j in range(r):
                 axs[j,i].imshow(gen_imgs[j,:,:,0], cmap="brg")
                 axs[j,i].axis('off')
-        fig.savefig("images/%d.png" % epoch)
+        fig.savefig("infoGANs/images/%d.png" % epoch)
         plt.close()
 
     def save(self, model, model_name):
-        model_path = "saved_model/%s.json" % model_name
-        weights_path = "saved_model/%s_weights.hdf5" % model_name
+        model_path = "infoGANs/saved_model/%s.json" % model_name
+        weights_path = "infoGANs/saved_model/%s_weights.hdf5" % model_name
         options = {"file_arch": model_path,
                     "file_weight": weights_path}
         json_string = model.to_json()
