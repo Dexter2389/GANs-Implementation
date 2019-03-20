@@ -102,119 +102,126 @@ def sample_generator_input(batch_size, noise_variable=124, num_classes=10):
     
     return sampled_noise, sampled_labels
 
-class InfoGAN():
-    def __init__(self):
-        self.img_rows = 32
-        self.img_cols = 32
-        self.channels = 3
-        self.num_classes = 10
-        self.img_shape = (self.img_rows, self.img_cols, self.channels)
-        self.latent_dim = 134
+def infoGAN():
+        img_rows = 32
+        img_cols = 32
+        channels = 3
+        num_classes = 10
+        img_shape = (img_rows, img_cols, channels)
+        latent_dim = 134
 
         optimizer = optimizers.Adam(0.0002, 0.5)
         losses = ["binary_crossentropy", mutual_info_loss]
 
         #Building Discriminator and Recognition Network
-        self.discriminator = discriminator_model()
-        self.recognition = recognition_model()
+        discriminator = discriminator_model()
+        recognition = recognition_model()
 
-        self.discriminator.compile(loss=['binary_crossentropy'], optimizer=optimizer, metrics=['accuracy'])
+        discriminator.compile(loss=['binary_crossentropy'], optimizer=optimizer, metrics=['accuracy'])
 
         # Build and compile the recognition network Q
-        self.recognition.compile(loss=[mutual_info_loss], optimizer=optimizer, metrics=['accuracy'])
+        recognition.compile(loss=[mutual_info_loss], optimizer=optimizer, metrics=['accuracy'])
 
         # Build the generator
-        self.generator = generator_model()
+        generator = generator_model()
 
         # The generator takes noise and the target label as input and generates the corresponding digit of that label
-        gen_input = layers.Input(shape=(self.latent_dim, ))
-        img = self.generator(gen_input)
+        gen_input = layers.Input(shape=(latent_dim, ))
+        img = generator(gen_input)
 
-        self.discriminator.trainable = True
+        discriminator.trainable = True
 
         # The discriminator takes generated image as input and determines validity
-        valid = self.discriminator(img)
+        valid = discriminator(img)
         # The recognition network produces the label
-        target_label = self.recognition(img)
+        target_label = recognition(img)
 
         # The combined model (stacked generator and discriminator)
-        self.combined = models.Model(gen_input, [valid, target_label])
-        self.combined.compile(loss=losses, optimizer=optimizer)
+        combined = models.Model(gen_input, [valid, target_label])
+        combined.compile(loss=losses, optimizer=optimizer)
 
-    def train(self, epochs, batch_size=128, sample_interval=50):
+        return discriminator, recognition, generator, combined
 
-        #Load the Dataset
-        (X_train, y_train), (_, _) = datasets.cifar10.load_data()
-        print(X_train.shape)
-        #Rescale -1 to 1
-        X_train = (X_train.astype(np.float32) - 127.5) / 127.5
-        print(X_train.shape)
-        y_train = y_train.reshape(-1, 1)
+def train(discriminator, generator, combined, epochs, batch_size=128, sample_interval=50, channels=3):
 
-        #Adversarial ground truths
-        valid = np.ones((batch_size, self.channels))
-        fake = np.zeros((batch_size, self.channels))
+    #Load the Dataset
+    (X_train, y_train), (_, _) = datasets.cifar10.load_data()
+    print(X_train.shape)
+    
+    #Rescale -1 to 1
+    X_train = (X_train.astype(np.float32) - 127.5) / 127.5
+    print(X_train.shape)
+    y_train = y_train.reshape(-1, 1)
+    
+    #Adversarial ground truths
+    valid = np.ones((batch_size, channels))
+    fake = np.zeros((batch_size, channels))
+    for epoch in range(epochs):
+        
+        #------------------Train Discriminator---------------
+    
+        #Selecting a random half batch of images
+        idx = np.random.randint(0, X_train.shape[0], batch_size)
+        imgs = X_train[idx]
+    
+        #Sample noise and categorical labels
+        sampled_noise, sampled_labels = sample_generator_input(batch_size)
+        gen_input = np.concatenate((sampled_noise, sampled_labels), axis=1)
+    
+        #Generate a half batch of new images
+        gen_imgs = generator.predict(gen_input)
+    
+        #------------------Train on real and generated data---------------
+        d_loss_real = discriminator.train_on_batch(imgs, valid)
+        d_loss_fake = discriminator.train_on_batch(gen_imgs, fake)
+    
+        # Avg. loss
+        d_loss = 0.5 * np.add(d_loss_real, d_loss_fake)
+    
+        # Train Generator and Discriminator Network
+        g_loss = combined.train_on_batch(gen_input, [valid, sampled_labels])
+    
+        # Plot the progress
+        print ("%d [D loss: %.2f, acc.: %.2f%%] [Q loss: %.2f] [G loss: %.2f]" % (epoch, d_loss[0], 100*d_loss[1], g_loss[1], g_loss[2]))
+    
+        # If at save interval => save generated image samples
+        if epoch % sample_interval == 0:
+            sample_images(epoch, generator)
 
-        for epoch in range(epochs):
-            
-            #------------------Train Discriminator---------------
+def sample_images(epoch, generator, num_classes=10):
 
-            #Selecting a random half batch of images
-            idx = np.random.randint(0, X_train.shape[0], batch_size)
-            imgs = X_train[idx]
+    r, c = 10, 10
+    fig, axs = plt.subplots(r, c)
+    
+    for i in range(c):
+        sampled_noise, _ = sample_generator_input(c)
+        label = utils.to_categorical(np.full(fill_value=i, shape=(r,1)), num_classes=num_classes)
+        gen_input = np.concatenate((sampled_noise, label), axis=1)
+        gen_imgs = generator.predict(gen_input)
+        gen_imgs = 0.5 * gen_imgs + 0.5
+        for j in range(r):
+            axs[j,i].imshow(gen_imgs[j,:,:,0], cmap="brg")
+            axs[j,i].axis('off')
+    
+    fig.savefig("infoGANs/images/%d.png" % epoch)
+    plt.close()
 
-            #Sample noise and categorical labels
-            sampled_noise, sampled_labels = sample_generator_input(batch_size)
-            gen_input = np.concatenate((sampled_noise, sampled_labels), axis=1)
-            #Generate a half batch of new images
-            gen_imgs = self.generator.predict(gen_input)
+def save(model, model_name):
+    
+    model_path = "infoGANs/saved_model/%s.json" % model_name
+    weights_path = "infoGANs/saved_model/%s_weights.hdf5" % model_name
+    options = {"file_arch": model_path,
+                "file_weight": weights_path}
+    json_string = model.to_json()
+    open(options['file_arch'], 'w').write(json_string)
+    model.save_weights(options['file_weight'])
 
-            #------------------Train on real and generated data---------------
-            d_loss_real = self.discriminator.train_on_batch(imgs, valid)
-            d_loss_fake = self.discriminator.train_on_batch(gen_imgs, fake)
+def save_model(generator, discriminator):
+    save(generator, "generator")
+    save(discriminator, "discriminator")
 
-            # Avg. loss
-            d_loss = 0.5 * np.add(d_loss_real, d_loss_fake)
 
-            # Train Generator and Recognition Network
-            g_loss = self.combined.train_on_batch(gen_input, [valid, sampled_labels])
-
-            # Plot the progress
-            print ("%d [D loss: %.2f, acc.: %.2f%%] [Q loss: %.2f] [G loss: %.2f]" % (epoch, d_loss[0], 100*d_loss[1], g_loss[1], g_loss[2]))
-
-            # If at save interval => save generated image samples
-            if epoch % sample_interval == 0:
-                self.sample_images(epoch)
-
-    def sample_images(self, epoch):
-        r, c = 10, 10
-
-        fig, axs = plt.subplots(r, c)
-        for i in range(c):
-            sampled_noise, _ = sample_generator_input(c)
-            label = utils.to_categorical(np.full(fill_value=i, shape=(r,1)), num_classes=self.num_classes)
-            gen_input = np.concatenate((sampled_noise, label), axis=1)
-            gen_imgs = self.generator.predict(gen_input)
-            gen_imgs = 0.5 * gen_imgs + 0.5
-            for j in range(r):
-                axs[j,i].imshow(gen_imgs[j,:,:,0], cmap="brg")
-                axs[j,i].axis('off')
-        fig.savefig("infoGANs/images/%d.png" % epoch)
-        plt.close()
-
-    def save(self, model, model_name):
-        model_path = "infoGANs/saved_model/%s.json" % model_name
-        weights_path = "infoGANs/saved_model/%s_weights.hdf5" % model_name
-        options = {"file_arch": model_path,
-                    "file_weight": weights_path}
-        json_string = model.to_json()
-        open(options['file_arch'], 'w').write(json_string)
-        model.save_weights(options['file_weight'])
-
-    def save_model(self):
-        self.save(self.generator, "generator")
-        self.save(self.discriminator, "discriminator")
 
 if __name__ == "__main__":
-    infogan = InfoGAN()
-    infogan.train(epochs=50000, batch_size=128, sample_interval=50)
+    discriminator, recognition, generator, combined = infoGAN()
+    train(discriminator, generator, combined, epochs=50000)
