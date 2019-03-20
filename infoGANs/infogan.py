@@ -14,6 +14,94 @@ import tensorflow.keras.backend as K
 from tensorflow.keras import datasets
 from tensorflow.keras import layers, models, optimizers, utils
 
+def generator_model(layer_filters=[256, 128, 64], latent_dim=134, activation="tanh", channels=3, kernel_size=(4,4), padding="same"):
+        
+    gen_input = layers.Input(shape=(latent_dim, ))
+
+    x = layers.Dense(1024, activation="relu")(gen_input)
+    x = layers.BatchNormalization(momentum=0.8)(x)
+
+    x = layers.Dense(448*4*4, activation="relu")(x)
+    x = layers.Reshape((4,4,448))(x)
+    x = layers.BatchNormalization(momentum=0.8)(x)
+    
+    for filters in layer_filters:
+        x = layers.UpSampling2D()(x)
+        x = layers.Conv2D(filters, kernel_size=kernel_size, padding="same")(x)
+        x = layers.Activation("relu")(x)
+        x = layers.BatchNormalization(momentum=0.8)(x)
+    
+    conv_last = layers.Conv2D(channels, kernel_size=kernel_size, padding="same")(x)
+    activation = layers.Activation(activation)(conv_last)
+    
+    model = models.Model(gen_input, activation)
+    model.summary()
+    
+    return model
+    
+def discriminator_recognition_net(layer_filters=[64, 128, 256], img_shape=(32, 32, 3), kernel_size=(4,4), strides=2):
+    
+    dis_input = layers.Input(shape=img_shape)
+    
+    x = layers.Conv2D(layer_filters[0], kernel_size=kernel_size, strides=strides, padding="same")(dis_input)
+    x = layers.LeakyReLU(alpha=0.1)(x)
+    x = layers.Dropout(0.25)(x)
+    
+    for filters in layer_filters[1:(len(layer_filters)-1)]:
+        x = layers.Conv2D(filters, kernel_size=kernel_size, strides=strides, padding="same")(x)
+        x = layers.ZeroPadding2D(padding=((0,1),(0,1)))(x)
+        x = layers.LeakyReLU(alpha=0.1)(x)
+        x = layers.Dropout(0.25)(x)
+        x = layers.BatchNormalization(momentum=0.8)(x)
+    
+    x = layers.Conv2D(layer_filters[(len(layer_filters)-1)], kernel_size=kernel_size, strides=strides, padding="same")(x)
+    x = layers.LeakyReLU(alpha=0.1)(x)
+    x = layers.Dropout(0.25)(x)
+    x = layers.BatchNormalization(momentum=0.8)(x)
+    
+    x = layers.Flatten()(x)
+    
+    return models.Model(dis_input, x)
+
+def discriminator_model(img_shape=(32, 32, 3), activation="sigmoid", channels=3):
+    dis_input = layers.Input(shape=img_shape)
+    
+    x = discriminator_recognition_net()(dis_input)
+    final = layers.Dense(channels, activation=activation)(x)
+    
+    model = models.Model(dis_input, final)
+    model.summary()
+    
+    return model
+
+def recognition_model(img_shape=(32, 32, 3), activation="softmax", num_classes=10):
+    reco_input = layers.Input(shape=img_shape)
+    
+    x = discriminator_recognition_net()(reco_input)
+    x = layers.Dense(128, activation="relu")(x)
+    x = layers.Dense(num_classes, activation=activation)(x)
+    
+    model = models.Model(reco_input, x)
+    model.summary()
+    
+    return model
+
+def mutual_info_loss(c, c_given_x):
+    """The mutual information metric we aim to minimize"""
+    eps = 1e-8
+    conditional_entropy = K.mean(- K.sum(K.log(c_given_x + eps) * c, axis=1))
+    entropy = K.mean(- K.sum(K.log(c + eps) * c, axis=1))
+    
+    return conditional_entropy + entropy
+
+def sample_generator_input(batch_size, noise_variable=124, num_classes=10):
+    # Generator inputs
+    sampled_noise = np.random.normal(0, 1, (batch_size, noise_variable))
+    #sampled_labels = np.random.randint(0, num_classes, batch_size).reshape(-1, 1)
+    sampled_labels = utils.to_categorical((np.random.randint(0, num_classes, batch_size).reshape(-1, 1)), num_classes=num_classes)
+    
+    return sampled_noise, sampled_labels
+
 class InfoGAN():
     def __init__(self):
         self.img_rows = 32
@@ -24,19 +112,19 @@ class InfoGAN():
         self.latent_dim = 134
 
         optimizer = optimizers.Adam(0.0002, 0.5)
-        losses = ["binary_crossentropy", self.mutual_info_loss]
+        losses = ["binary_crossentropy", mutual_info_loss]
 
         #Building Discriminator and Recognition Network
-        self.discriminator = self.discriminator_model()
-        self.recognition = self.recognition_model()
+        self.discriminator = discriminator_model()
+        self.recognition = recognition_model()
 
         self.discriminator.compile(loss=['binary_crossentropy'], optimizer=optimizer, metrics=['accuracy'])
 
         # Build and compile the recognition network Q
-        self.recognition.compile(loss=[self.mutual_info_loss], optimizer=optimizer, metrics=['accuracy'])
+        self.recognition.compile(loss=[mutual_info_loss], optimizer=optimizer, metrics=['accuracy'])
 
         # Build the generator
-        self.generator = self.generator_model()
+        self.generator = generator_model()
 
         # The generator takes noise and the target label as input and generates the corresponding digit of that label
         gen_input = layers.Input(shape=(self.latent_dim, ))
@@ -52,90 +140,6 @@ class InfoGAN():
         # The combined model (stacked generator and discriminator)
         self.combined = models.Model(gen_input, [valid, target_label])
         self.combined.compile(loss=losses, optimizer=optimizer)
-
-    def generator_model(self, layer_filters=[256, 128, 64]):
-        
-        gen_input = layers.Input(shape=(self.latent_dim, ))
-
-        x = layers.Dense(1024, activation="relu")(gen_input)
-        x = layers.BatchNormalization(momentum=0.8)(x)
-
-        x = layers.Dense(448*4*4, activation="relu")(x)
-        x = layers.Reshape((4,4,448))(x)
-        x = layers.BatchNormalization(momentum=0.8)(x)
-
-        for filters in layer_filters:
-            x = layers.UpSampling2D()(x)
-            x = layers.Conv2D(filters, kernel_size=(4,4), padding="same")(x)
-            x = layers.Activation("relu")(x)
-            x = layers.BatchNormalization(momentum=0.8)(x)
-
-        conv_last = layers.Conv2D(self.channels, kernel_size=(4,4), padding="same")(x)
-        activation = layers.Activation("tanh")(conv_last)
-
-        model = models.Model(gen_input, activation)
-
-        model.summary()
-        
-        return model
-        
-    def discriminator_recognition_net(self, layer_filters=[64, 128, 256]):
-        dis_input = layers.Input(shape=self.img_shape)
-        x = layers.Conv2D(layer_filters[0], kernel_size=(4,4), strides=2, padding="same")(dis_input)
-        x = layers.LeakyReLU(alpha=0.1)(x)
-        x = layers.Dropout(0.25)(x)
-
-        for filters in layer_filters[1:(len(layer_filters)-1)]:
-            x = layers.Conv2D(filters, kernel_size=(4,4), strides=2, padding="same")(x)
-            x = layers.ZeroPadding2D(padding=((0,1),(0,1)))(x)
-            x = layers.LeakyReLU(alpha=0.1)(x)
-            x = layers.Dropout(0.25)(x)
-            x = layers.BatchNormalization(momentum=0.8)(x)
-
-        x = layers.Conv2D(layer_filters[(len(layer_filters)-1)], kernel_size=(4,4), strides=2, padding="same")(x)
-        x = layers.LeakyReLU(alpha=0.1)(x)
-        x = layers.Dropout(0.25)(x)
-        x = layers.BatchNormalization(momentum=0.8)(x)
-        
-        x = layers.Flatten()(x)
-
-        return models.Model(dis_input, x)
-    
-    def discriminator_model(self):
-        dis_input = layers.Input(shape=self.img_shape)
-        x = self.discriminator_recognition_net()(dis_input)
-        final = layers.Dense(self.channels, activation="sigmoid")(x)
-
-        model = models.Model(dis_input, final)
-        model.summary()
-
-        return model
-    
-    def recognition_model(self):
-        reco_input = layers.Input(shape=self.img_shape)
-        x = self.discriminator_recognition_net()(reco_input)
-        x = layers.Dense(128, activation="relu")(x)
-        x = layers.Dense(self.num_classes, activation="softmax")(x)
-
-        model = models.Model(reco_input, x)
-        model.summary()
-
-        return model
-
-    def mutual_info_loss(self, c, c_given_x):
-        """The mutual information metric we aim to minimize"""
-        eps = 1e-8
-        conditional_entropy = K.mean(- K.sum(K.log(c_given_x + eps) * c, axis=1))
-        entropy = K.mean(- K.sum(K.log(c + eps) * c, axis=1))
-
-        return conditional_entropy + entropy
-    
-    def sample_generator_input(self, batch_size, noise_variable=124):
-        # Generator inputs
-        sampled_noise = np.random.normal(0, 1, (batch_size, noise_variable))
-        #sampled_labels = np.random.randint(0, self.num_classes, batch_size).reshape(-1, 1)
-        sampled_labels = utils.to_categorical((np.random.randint(0, self.num_classes, batch_size).reshape(-1, 1)), num_classes=self.num_classes)
-        return sampled_noise, sampled_labels
 
     def train(self, epochs, batch_size=128, sample_interval=50):
 
@@ -160,7 +164,7 @@ class InfoGAN():
             imgs = X_train[idx]
 
             #Sample noise and categorical labels
-            sampled_noise, sampled_labels = self.sample_generator_input(batch_size)
+            sampled_noise, sampled_labels = sample_generator_input(batch_size)
             gen_input = np.concatenate((sampled_noise, sampled_labels), axis=1)
             #Generate a half batch of new images
             gen_imgs = self.generator.predict(gen_input)
@@ -187,7 +191,7 @@ class InfoGAN():
 
         fig, axs = plt.subplots(r, c)
         for i in range(c):
-            sampled_noise, _ = self.sample_generator_input(c)
+            sampled_noise, _ = sample_generator_input(c)
             label = utils.to_categorical(np.full(fill_value=i, shape=(r,1)), num_classes=self.num_classes)
             gen_input = np.concatenate((sampled_noise, label), axis=1)
             gen_imgs = self.generator.predict(gen_input)
