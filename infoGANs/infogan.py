@@ -1,7 +1,7 @@
 '''Trains infoGAN on Cifar10 using Keras
 
 [1] Chen, Xi, et al. "Infogan: Interpretable representation learning by
-information maximizing generative adversarial nets." 
+information maximizing generative adversarial nets."
 Advances in Neural Information Processing Systems. 2016.
 '''
 
@@ -15,14 +15,14 @@ from tensorflow.keras import datasets
 from tensorflow.keras import layers, models, optimizers, utils
 
 
-def generator_model(layer_filters=[256, 128, 64], latent_dim=134, activation="tanh", channels=3, kernel_size=(4, 4), padding="same"):
-
-    gen_input = layers.Input(shape=(latent_dim, ))
+def generator_model(layer_filters=[256, 128, 64], latent_dim=134, activation="tanh", channels=3,
+                    kernel_size=(4, 4), padding="same"):
+    gen_input = layers.Input(shape=(latent_dim,))
 
     x = layers.Dense(1024, activation="relu")(gen_input)
     x = layers.BatchNormalization(momentum=0.8)(x)
 
-    x = layers.Dense(448*4*4, activation="relu")(x)
+    x = layers.Dense(448 * 4 * 4, activation="relu")(x)
     x = layers.Reshape((4, 4, 448))(x)
     x = layers.BatchNormalization(momentum=0.8)(x)
 
@@ -42,8 +42,8 @@ def generator_model(layer_filters=[256, 128, 64], latent_dim=134, activation="ta
     return model
 
 
-def discriminator_recognition_net(layer_filters=[64, 128, 256], img_shape=(32, 32, 3), kernel_size=(4, 4), strides=2):
-
+def discriminator_recognition_net(layer_filters=[64, 128, 256], img_shape=(32, 32, 3),
+                                  kernel_size=(4, 4), strides=2):
     dis_input = layers.Input(shape=img_shape)
 
     x = layers.Conv2D(layer_filters[0], kernel_size=kernel_size,
@@ -51,7 +51,7 @@ def discriminator_recognition_net(layer_filters=[64, 128, 256], img_shape=(32, 3
     x = layers.LeakyReLU(alpha=0.1)(x)
     x = layers.Dropout(0.25)(x)
 
-    for filters in layer_filters[1:(len(layer_filters)-1)]:
+    for filters in layer_filters[1:(len(layer_filters) - 1)]:
         x = layers.Conv2D(filters, kernel_size=kernel_size,
                           strides=strides, padding="same")(x)
         x = layers.ZeroPadding2D(padding=((0, 1), (0, 1)))(x)
@@ -59,7 +59,7 @@ def discriminator_recognition_net(layer_filters=[64, 128, 256], img_shape=(32, 3
         x = layers.Dropout(0.25)(x)
         x = layers.BatchNormalization(momentum=0.8)(x)
 
-    x = layers.Conv2D(layer_filters[(len(layer_filters)-1)],
+    x = layers.Conv2D(layer_filters[(len(layer_filters) - 1)],
                       kernel_size=kernel_size, strides=strides, padding="same")(x)
     x = layers.LeakyReLU(alpha=0.1)(x)
     x = layers.Dropout(0.25)(x)
@@ -107,7 +107,7 @@ def mutual_info_loss(c, c_given_x):
 def sample_generator_input(batch_size, noise_variable=124, num_classes=10):
     # Generator inputs
     sampled_noise = np.random.normal(0, 1, (batch_size, noise_variable))
-    #sampled_labels = np.random.randint(0, num_classes, batch_size).reshape(-1, 1)
+    # sampled_labels = np.random.randint(0, num_classes, batch_size).reshape(-1, 1)
     sampled_labels = utils.to_categorical((np.random.randint(
         0, num_classes, batch_size).reshape(-1, 1)), num_classes=num_classes)
 
@@ -139,8 +139,9 @@ def infoGAN():
     # Build the generator
     generator = generator_model()
 
-    # The generator takes noise and the target label as input and generates the corresponding digit of that label
-    gen_input = layers.Input(shape=(latent_dim, ))
+    # The generator takes noise and the target label as input and generates the corresponding digit
+    # of that label
+    gen_input = layers.Input(shape=(latent_dim,))
     img = generator(gen_input)
 
     discriminator.trainable = True
@@ -157,8 +158,10 @@ def infoGAN():
     return discriminator, recognition, generator, combined
 
 
-def train(discriminator, generator, combined, epochs, batch_size=128, sample_interval=50, channels=3):
-
+def train(discriminator, generator, combined, epochs,
+          batch_size=128,
+          sample_interval=50,
+          channels=3):
     # Load the Dataset
     (X_train, y_train), (_, _) = datasets.cifar10.load_data()
     print(X_train.shape)
@@ -198,7 +201,7 @@ def train(discriminator, generator, combined, epochs, batch_size=128, sample_int
 
         # Plot the progress
         print("%d [D loss: %.2f, acc.: %.2f%%] [Q loss: %.2f] [G loss: %.2f]" % (
-            epoch, d_loss[0], 100*d_loss[1], g_loss[1], g_loss[2]))
+            epoch, d_loss[0], 100 * d_loss[1], g_loss[1], g_loss[2]))
 
         # If at save interval => save generated image samples
         if epoch % sample_interval == 0:
@@ -206,7 +209,6 @@ def train(discriminator, generator, combined, epochs, batch_size=128, sample_int
 
 
 def sample_images(epoch, generator, num_classes=10):
-
     r, c = 10, 10
     fig, axs = plt.subplots(r, c)
 
@@ -226,7 +228,6 @@ def sample_images(epoch, generator, num_classes=10):
 
 
 def save(model, model_name):
-
     model_path = "infoGANs/saved_model/%s.json" % model_name
     weights_path = "infoGANs/saved_model/%s_weights.hdf5" % model_name
     options = {"file_arch": model_path,
